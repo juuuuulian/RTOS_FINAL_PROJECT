@@ -31,6 +31,7 @@
     .def svcPidOf
     .def svcKill
     .def svcChangePreemption
+    .def svcRestartThread
 
 ;-----------------------------------------------------------------------------
 ; Register values and large immediate values
@@ -80,6 +81,7 @@ setPrivilegeOff:
 ; Saves context of task
 ; subtracting MAKES SPACE FOR THE NEXT STORE
 ; Hardware auto saves xPSR, pc, lr, R12, R3, R2 , R1
+
 pushContext:
 	MRS R0, PSP
 	SUB R0, #4
@@ -232,3 +234,6 @@ svcChangePreemption:
 	SVC #35
 	BX LR
 
+svcRestartThread:
+	SVC #37
+	BX LR

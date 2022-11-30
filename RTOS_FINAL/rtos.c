@@ -77,6 +77,7 @@
 #define PIDOF_SVC 31
 #define KILL_SVC 33
 #define CHANGE_PREEMPTION_SVC 35
+#define RESTART_THREAD_SVC 37
 
 extern void svcYield(void);
 extern void svcSleep(void);
@@ -93,6 +94,7 @@ extern void svcPMAP(void);
 extern void svcPidOf(void);
 extern void svcKill(void);
 extern void svcChangePreemption(void);
+extern void svcRestartThread(void);
 
 void accessWindow(uint32_t baseAdd, uint32_t size_in_bytes);
 uint32_t calculateSubregionMask(uint32_t baseAdd, uint32_t size_in_bytes);
@@ -115,6 +117,7 @@ bool preemptionFlag = 1;
 bool priorityFlag = 1;
 bool ping = 1;
 uint64_t totalTime = 0;
+uint64_t initTime=0;
 
 uint32_t *brk = (uint32_t *) 0x20008000;        // Moving the brk to the top of heap
 uint32_t *heap = (uint32_t *) 0x20001400;        // heap at 20001400 which gives room in SRAM for OS
@@ -199,6 +202,7 @@ typedef struct _SEMA
     uint32_t waitingTaskNumbers[MAX_QUEUE_SIZE];
 } sema;
 
+uint32_t cpuTime[MAX_TASKS] = { 0 };
 
 //-----------------------------------------------------------------------------
 // Memory Manager and MPU Functions
@@ -400,8 +404,6 @@ int rtosScheduler()
     return task;
 }
 
-
-
 bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackBytes)
 {
     bool ok = false;
@@ -453,7 +455,7 @@ void restartThread(_fn fn)
 // NOTE: see notes in class for strategies on whether stack is freed or not
 void stopThread(_fn fn)
 {
-
+    svcKill();
 }
 
 // REQUIRED: modify this function to set a thread priority
@@ -523,6 +525,18 @@ void post(int8_t semaphore)
 void systickIsr()
 {
     uint8_t i;
+
+    // wait 2 second then clear the time
+    if (TIMER1_TAV_R > 80000000)
+    {
+        for (i = 0; i < MAX_TASKS; i++)
+        {
+
+            tcb[i].time = 0;
+        }
+        initTime = 0;
+    }
+
     for (i = 0; i < MAX_TASKS; i++)
     {
         if (tcb[i].state == STATE_DELAYED)
@@ -562,19 +576,21 @@ void pendSvIsr()
     // Now we must save the other registers (R4-R11) so that we can eventually
     // return back to our task in the same state that we left.
     pushContext();
-    tcb[taskCurrent].sp = getPSP();             // This updates the tasks stack pointer to reflect the current stack now that things are added
+    tcb[taskCurrent].sp = getPSP();    // This updates the tasks stack pointer to reflect the current stack now that things are added
 
+    tcb[taskCurrent].time += (TIMER1_TAV_R - initTime);
 
-    tcb[taskCurrent].time = TIMER1_TAV_R;
-
-
+    cpuTime[taskCurrent] = tcb[taskCurrent].time;   //
     TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
 
     TIMER1_TAV_R = 0;
-
-    TIMER1_CTL_R |= TIMER_CTL_TAEN;
+    //tcb[taskCurrent].time = 0;
 
     taskCurrent = (uint32_t) rtosScheduler();   // Now that state info is saved we can begin scheduling the new task
+
+    TIMER1_CTL_R |= TIMER_CTL_TAEN; // turn timing on
+
+    initTime = TIMER1_TAV_R;        // set the initial time
 
 /*
     2 options remain ...
@@ -600,11 +616,8 @@ void pendSvIsr()
     else if (tcb[taskCurrent].state == STATE_UNRUN)
     {
         tcb[taskCurrent].state = STATE_READY;
-        //itoa_h((uint32_t)tcb[taskCurrent].spInit);
         setPSP((uint32_t*)tcb[taskCurrent].spInit);
-        //itoa_h((uint32_t)getPSP());
         thatDummyStack(tcb[taskCurrent].pid);
-        //itoa_h((uint32_t)getPSP());
     }
 
     for (i = 0; i < 4; i++)
@@ -669,6 +682,7 @@ void svCallIsr()
             if (semaphores[*psp].queueSize > 0)                                 // if there are processes in the semaphore Queue
             {                                                                   // mark the next waiting task as ready
                 tcb[semaphores[*psp].processQueue[0]].state = STATE_READY;      // This is the next task in the queue
+                tcb[semaphores[*psp].processQueue[0]].semaphore = 0;      // This is the next task in the queue
 
                 semaphores[*psp].count--;
                 for (i = 0; i < semaphores[*psp].queueSize; i++)
@@ -705,7 +719,7 @@ void svCallIsr()
         {
             sema *sem;
             uint8_t j;
-            sem = (sema*)*(psp+1);
+            sem = (sema*)*(psp + 1);
             for(i = 1; i < MAX_SEMAPHORES; i++)
             {
                 switch (i)
@@ -752,7 +766,6 @@ void svCallIsr()
                         }
                         break;
                     }
-
                 }
             }
 
@@ -768,10 +781,13 @@ void svCallIsr()
                 ps[i].pid = (uint32_t)tcb[i].pid;
                 strncpy(ps[i].processName, tcb[i].name, 16);
                 ps[i].state = tcb[i].state;
-                ps[i].time = tcb[i].time;
-                totalTime += ps[i].time;
+                //ps[i].time = tcb[i].time;
+                ps[i].time = cpuTime[i];
+                //totalTime += ps[i].time;
+                totalTime += cpuTime[i];
             }
             ps[0].totalTimeSpent = totalTime;
+            totalTime = 0;
             break;
         }
 
@@ -817,7 +833,6 @@ void svCallIsr()
                         pm->address = tcb[i].sp;
                         pm->heapAddress = (uint32_t)heap;
                     }
-
                     else
                     {
                         pm->stackOrHeap = 1;
@@ -848,13 +863,37 @@ void svCallIsr()
             break;
 
         case KILL_SVC:
-
+            pid = *psp;
+            for(i = 0; i < MAX_TASKS; i++)
+            {
+                if(tcb[i].pid == pid)
+                {
+                    if(tcb[i].state == STATE_DELAYED)
+                    {
+                        tcb[i].ticks = 0;
+                    }
+                    tcb[i].state = STATE_INVALID;
+                }
+            }
             break;
 
         case CHANGE_PREEMPTION_SVC:
             toggle = *psp;
             preemptionFlag = toggle;
             break;
+
+        case RESTART_THREAD_SVC:
+        {
+            pid = *psp;
+            for(i = 0; i < MAX_TASKS; i++)
+            {
+                if(tcb[i].pid == pid)
+                {
+                    tcb[i].state = STATE_READY;
+                }
+            }
+            break;
+        }
     }
 }
 
@@ -1071,23 +1110,17 @@ void getData(uint8_t type, void * generic)
            svcPS();
            break;
 
-       case PID_SVC:
-
-           break;
-
        case PMAP_SVC:
            svcPMAP();
            break;
 
        case PIDOF_SVC:
            svcPidOf();
-
            break;
 
        case KILL_SVC:
-
+           svcKill();
            break;
-
     }
 }
 
@@ -1352,6 +1385,10 @@ void shell()
             for(i = 0; i < 10; i++)
             {
                 percentage = (ps[i].time * 10000) / ps[0].totalTimeSpent;
+                if(percentage == 0)
+                {
+                    putsUart0("0.00");
+                }
                 itoa_s_percentage(percentage);
                 //itoa_s(ps[i].time);
                 putsUart0("    \t");
@@ -1371,15 +1408,12 @@ void shell()
                 itoa_s((uint32_t)ps[i].pid);
                 putsUart0("       \t");
 
-
                 if (ps[i].priority == 0)
                 {
                     putsUart0("0");
                 }
                 itoa_s(ps[i].priority);
                 putsUart0("      \t\t");
-
-
 
                 switch (ps[i].state)
 
@@ -1405,26 +1439,69 @@ void shell()
                         break;
                 }
                 //putsUart0("\n");
-
             }
+            ps[0].totalTimeSpent = 0;
         }
 
         else if (isCommand(&data, "ipcs", 0))
         {
+            uint8_t j;
 
             putsUart0("Semaphore: \t");
             putsUart0("  Count: \t\t");
-            putsUart0("  Who's Waiting:  \t");
+            putsUart0("  Who's Waiting:  \n");
             putsUart0("-------------------------------------------------------\n");
             getData(IPCS_SVC, (void *)&sem);
 
-
+            for (i = 0; i < 4; i++)
+            {
+                putsUart0(sem[i].processName);
+                putsUart0("     \t\t");
+                itoa_s(sem[i].count);
+                if(sem[i].count == 0)
+                {
+                    putcUart0('0');
+                }
+                putsUart0("     \t");
+                for (j = 0; j < MAX_QUEUE_SIZE; j++)
+                {
+                    switch (sem[i].waitingTaskNumbers[j])
+                    {
+                        case 1: // lengthy
+                        {
+                            putsUart0("      LengthyFn ");
+                            break;
+                        }
+                        case 3: // oneshot
+                        {
+                            putsUart0("      Oneshot ");
+                            break;
+                        }
+                        case 4: // readkeys
+                        {
+                            putsUart0("       readKeys ");
+                            break;
+                        }
+                        case 5: // debounce
+                        {
+                            putsUart0("      Debounce ");
+                            break;
+                        }
+                        case 6: // important
+                        {
+                            putsUart0("     Important ");
+                            break;
+                        }
+                    }
+                }
+                putsUart0("\n");
+            }
         }
 
         else if (isCommand(&data, "kill", 0))
         {
             pidNumber = getFieldInteger(&data, 1);
-            //kill(pidNumber, getFieldString(&data, 1));
+            svcKill();
         }
 
         else if (isCommand(&data, "pmap", 0))

@@ -147,7 +147,6 @@ void itoa_s_percentage(uint32_t num)
         for (i = 0; i < len; i++)
         {
             putcUart0(buff[i]);
-            //utcUart0(buff[i]);
             if (i == 1)
             {
                 putcUart0('.');
@@ -160,13 +159,23 @@ void itoa_s_percentage(uint32_t num)
         for (i = 0; i < len; i++)
         {
             putcUart0(buff[i]);
-            //utcUart0(buff[i]);
             if (i == 0)
             {
                 putcUart0('.');
             }
         }
     }
+    if (len == 2)
+        {
+            for (i = 0; i < len; i++)
+            {
+                putcUart0(buff[i]);
+                if (i == 0)
+                {
+                    putcUart0('.');
+                }
+            }
+        }
     putcUart0('%');
     //putsUart0(buff);
     //putsUart0("\n");
