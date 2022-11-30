@@ -891,6 +891,7 @@ void svCallIsr()
                     tcb[i].sp = tcb[i].spInit;
                     tcb[i].state = STATE_UNRUN;
                     tcb[i].priority = tcb[i].initPriority;
+                    break;
                 }
             }
             break;
