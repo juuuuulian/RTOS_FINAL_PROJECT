@@ -60,7 +60,7 @@
 #define PB_4 PORTC,6
 #define PB_5 PORTC,7
 
-#define MAX_PRIORITY_LEVEL 8
+#define MAX_PRIORITY_LEVEL 7
 
 #define YIELD_SVC 7
 #define SLEEP_SVC 9
@@ -318,40 +318,55 @@ void initRtos()
         tcb[i].pid = 0;
     }
 }
-/*
+
+//TODO REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
     bool ok;
     static uint8_t task = 0xFF;
     ok = false;
-    static uint8_t last_run_task[8] = {0};
-    uint8_t highest_priority = 7;
+    static uint8_t previousTasksArray[8] = {0, 0, 0, 0, 0, 0, 0, 0};    // holds the previously ran task for each priority level in the cake
+    uint8_t highestPriorityReached = MAX_PRIORITY_LEVEL;                // keeps track of the highest priority found in the schedule
 
     if(priorityFlag)
     {
-        last_run_task[tcb[taskCurrent].priority] = taskCurrent;
-        highest_priority = 7;
-        for(task = 0; task < MAX_TASKS; task++)
+        previousTasksArray[tcb[taskCurrent].priority] = taskCurrent;    // placing the previously ran task array at the priority level it ran at
+
+        highestPriorityReached = MAX_PRIORITY_LEVEL;                    // initialized with the max priority of level of 7
+
+        for(task = 0; task < MAX_TASKS; task++)                         // go through each task in tcb until you find a task with lower priority number (More Important)
         {
-            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority < highest_priority))
-                highest_priority = tcb[task].priority;
+            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority < highestPriorityReached))
+            {
+                highestPriorityReached = tcb[task].priority;            // Once you find the task with a superior priority (lower number), set it to the highest reached priority
+            }
+            if(highestPriorityReached == 0)
+            {
+                break;
+            }
+
         }
 
-        task = last_run_task[highest_priority];
+        task = previousTasksArray[highestPriorityReached];              // set the task lined up to schedule to the next highest priority task at that level
 
         while(!ok)
         {
             task++;
             if (task >= MAX_TASKS)
                 task = 0;
-            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority == highest_priority))
-                ok = 1;
+
+            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority == highestPriorityReached))
+            {
+                ok = true;      // if we found the task with the priority with the highest priority then we break out of the loop
+                //break;
+            }
+
         }
     }
 
     else
     {
-        while(!ok)
+        while(!ok)              // Round Robin Scheduling
         {
             task++;
             if (task >= MAX_TASKS)
@@ -361,71 +376,8 @@ int rtosScheduler()
     }
     return task;
 }
-*/
 
 
-
-// REQUIRED: Implement prioritization to 8 levels
-int rtosScheduler()
-{
-    uint8_t flag = 0;
-    uint8_t priorityLevel = 0;
-    static uint8_t task = 0xFF;
-    static uint8_t priority[8];
-    static uint8_t currentTask = 0;
-    uint8_t index;
-    uint8_t high = 7;
-    uint8_t i;
-    bool ok;
-// TODO: something is weird here
-
-    ok = false;
-
-    while (!ok)
-    {
-        task++;
-        if (task >= MAX_TASKS)
-            task = 0;
-
-        if (priorityFlag)
-        {
-            while(priorityLevel < MAX_PRIORITY_LEVEL)
-            {
-                for(i = 0; i <= MAX_TASKS; i++)
-                {
-                    // for rollover
-                    index = ( (i + (currentTask) ) % MAX_TASKS);
-
-
-                    if( ( tcb[index].state == STATE_READY || tcb[index].state == STATE_UNRUN ) && ( tcb[index].priority == priorityLevel) )
-                    {
-                        flag = 1;
-                        task = index;
-                        priority[priorityLevel] = index;
-                        break;
-                    }
-                }
-                if(flag)
-                {
-                    // add 1 to start at the next task index
-                    currentTask = index + 1;
-                    return task;
-                }
-                else
-                {
-                    priorityLevel++;
-                }
-            }
-        }
-        else
-        {
-            ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
-            return task;
-        }
-
-    }
-    return task;
-}
 
 bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackBytes)
 {
@@ -680,7 +632,7 @@ void svCallIsr()
             semaphores[*psp].count++;
             if (semaphores[*psp].queueSize > 0)                                 // if there are processes in the semaphore Queue
             {                                                                   // mark the next waiting task as ready
-                tcb[semaphores[*psp].processQueue[0]].state = STATE_READY;
+                tcb[semaphores[*psp].processQueue[0]].state = STATE_READY;      // This is the next task in the queue
 
                 semaphores[*psp].count--;
                 for (i = 0; i < semaphores[*psp].queueSize; i++)
