@@ -142,7 +142,7 @@ semaphore semaphores[MAX_SEMAPHORES];
 // task
 #define STATE_INVALID    0 // no task
 #define STATE_UNRUN      1 // task has never been run
-#define STATE_READY      2 // has run, can resume at any time
+#define STATE_READY      2 // has run, can resume at any time   set ticks to 0
 #define STATE_DELAYED    3 // has run, but now awaiting timer
 #define STATE_BLOCKED    4 // has run, but now blocked by semaphore
 
@@ -188,7 +188,17 @@ typedef struct _PROGRAM_MAP
     uint32_t address;
     uint32_t size;
     uint8_t stackOrHeap;
+    uint32_t heapAddress;
+    uint32_t heapSize;
 } programMap;
+
+typedef struct _SEMA
+{
+    char processName[16];
+    uint32_t count;
+    uint32_t waitingTaskNumbers[MAX_QUEUE_SIZE];
+} sema;
+
 
 //-----------------------------------------------------------------------------
 // Memory Manager and MPU Functions
@@ -692,9 +702,62 @@ void svCallIsr()
             break;
 
         case IPCS_SVC:
+        {
+            sema *sem;
+            uint8_t j;
+            sem = (sema*)*(psp+1);
+            for(i = 1; i < MAX_SEMAPHORES; i++)
+            {
+                switch (i)
+                {
+                    case keyPressed:
+                    {
+                        strncpy(sem[i - 1].processName, "keyPressed",16);
+                        sem[i - 1].count = semaphores[i].count;
+                        for (j = 0; j < MAX_QUEUE_SIZE; j++)
+                        {
+                            sem[i - 1].waitingTaskNumbers[j] = semaphores[i].processQueue[j];
+                        }
+
+                        break;
+                    }
+                    case keyReleased:
+                    {
+                        strncpy(sem[i - 1].processName, "keyReleased",16);
+                        sem[i - 1].count = semaphores[i].count;
+                        for (j = 0; j < MAX_QUEUE_SIZE; j++)
+                        {
+                            sem[i - 1].waitingTaskNumbers[j] = semaphores[i].processQueue[j];
+                        }
+                        break;
+                    }
+                    case flashReq:
+                    {
+                        strncpy(sem[i - 1].processName, "flashReq",16);
+                        sem[i - 1].count = semaphores[i].count;
+                        for (j = 0; j < MAX_QUEUE_SIZE; j++)
+                        {
+                            sem[i - 1].waitingTaskNumbers[j] = semaphores[i].processQueue[j];
+                        }
+
+                        break;
+                    }
+                    case resource:
+                    {
+                        strncpy(sem[i - 1].processName, "resource",16);
+                        sem[i - 1].count = semaphores[i].count;
+                        for (j = 0; j < MAX_QUEUE_SIZE; j++)
+                        {
+                            sem[i - 1].waitingTaskNumbers[j] = semaphores[i].processQueue[j];
+                        }
+                        break;
+                    }
+
+                }
+            }
 
             break;
-
+        }
         case PS_SVC:
         {
             programStatus *ps;
@@ -748,11 +811,19 @@ void svCallIsr()
                     strncpy(pm->processName, tcb[i].name, 16);
                     pm->size = tcb[i].size;
                     if (strCmp(pm->processName, "lengthyFn") == 0)
+                    {
                         pm->stackOrHeap = 0;
-                    else
-                        pm->stackOrHeap = 1;
-                }
+                        pm->heapSize = tcb[i].size;
+                        pm->address = tcb[i].sp;
+                        pm->heapAddress = (uint32_t)heap;
+                    }
 
+                    else
+                    {
+                        pm->stackOrHeap = 1;
+                        pm->heapSize = 0;
+                    }
+                }
             }
             if (!found)
                 putsUart0("\nNOT FOUND\n");
@@ -993,7 +1064,7 @@ void getData(uint8_t type, void * generic)
     switch (type)
     {
         case IPCS_SVC:
-
+           svcIPCS();
            break;
 
        case PS_SVC:
@@ -1254,6 +1325,7 @@ void shell()
 
     programStatus ps[10] = {0};
     programMap pm;
+    sema sem[4];
 
     putsUart0("\n");
     putsUart0("> ");
@@ -1339,7 +1411,14 @@ void shell()
 
         else if (isCommand(&data, "ipcs", 0))
         {
-            //ipcs();
+
+            putsUart0("Semaphore: \t");
+            putsUart0("  Count: \t\t");
+            putsUart0("  Who's Waiting:  \t");
+            putsUart0("-------------------------------------------------------\n");
+            getData(IPCS_SVC, (void *)&sem);
+
+
         }
 
         else if (isCommand(&data, "kill", 0))
@@ -1372,7 +1451,17 @@ void shell()
             else
                 putsUart0("Heap\n");
 
+            if(pm.heapSize > 0)
+            {
+                putsUart0("Heap Allocation:\n");
 
+                putsUart0(pm.processName);
+                putsUart0("     \t");
+                itoa_h_pmap(pm.heapAddress);
+                putsUart0("     \t");
+                itoa_s(pm.heapSize);
+                putsUart0("           \t");
+            }
         }
 
         else if (isCommand(&data, "preempt", 0))
