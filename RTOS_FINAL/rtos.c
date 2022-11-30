@@ -113,8 +113,9 @@ extern void thatDummyStack(void*);
 
 bool preemptionFlag = 1;
 bool priorityFlag = 1;
+bool ping = 1;
+uint64_t totalTime = 0;
 
-//uint32_t *psp = (uint32_t *) 0x20002000;        // PSP has to be in scope of malloc window
 uint32_t *brk = (uint32_t *) 0x20008000;        // Moving the brk to the top of heap
 uint32_t *heap = (uint32_t *) 0x20001400;        // heap at 20001400 which gives room in SRAM for OS
 
@@ -164,10 +165,10 @@ struct _tcb
     uint32_t srd;                  // MPU subregion disable bits (one per 1 KiB)
     char name[16];                 // name of task used in ps command
     uint64_t time;
+    uint32_t size;
     void *semaphore;               // pointer to the semaphore that is blocking the thread
 } tcb[MAX_TASKS];
 
-// Struct for holding parsed data from user
 typedef struct _PROGRAM_STATUS
 {
     uint8_t state;
@@ -175,7 +176,19 @@ typedef struct _PROGRAM_STATUS
     uint8_t priority;
     char processName[16];
     uint64_t time;
+    uint64_t totalTimeSpent;
+    uint32_t address;
+    uint32_t size;
 } programStatus;
+
+typedef struct _PROGRAM_MAP
+{
+    uint16_t pid;
+    char processName[16];
+    uint32_t address;
+    uint32_t size;
+    uint8_t stackOrHeap;
+} programMap;
 
 //-----------------------------------------------------------------------------
 // Memory Manager and MPU Functions
@@ -408,6 +421,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
             tcb[i].priority = priority;
             tcb[i].initPriority = priority;
             tcb[i].srd = calculateSubregionMask((uint32_t)tcb[i].sp - 1, stackBytes);
+            tcb[i].size = stackBytes;
             //tcb[i].srd = calculateSubregionMask((uint32_t)tcb[i].sp, stackBytes);
             // increment task count
             taskCount++;
@@ -462,6 +476,8 @@ void startRtos()
     NVIC_ST_RELOAD_R = 39999;   // for a 1kHz rate
     NVIC_ST_CTRL_R |= NVIC_ST_CTRL_CLK_SRC | NVIC_ST_CTRL_INTEN | NVIC_ST_CTRL_ENABLE;
 
+    // Starting the timer before first task gets executed
+    TIMER1_CTL_R |= TIMER_CTL_TAEN;
     setPrivilegeOff();
     fn();
     while(1);
@@ -537,6 +553,16 @@ void pendSvIsr()
     // return back to our task in the same state that we left.
     pushContext();
     tcb[taskCurrent].sp = getPSP();             // This updates the tasks stack pointer to reflect the current stack now that things are added
+
+
+    tcb[taskCurrent].time = TIMER1_TAV_R;
+
+
+    TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
+
+    TIMER1_TAV_R = 0;
+
+    TIMER1_CTL_R |= TIMER_CTL_TAEN;
 
     taskCurrent = (uint32_t) rtosScheduler();   // Now that state info is saved we can begin scheduling the new task
 
@@ -680,7 +706,9 @@ void svCallIsr()
                 strncpy(ps[i].processName, tcb[i].name, 16);
                 ps[i].state = tcb[i].state;
                 ps[i].time = tcb[i].time;
+                totalTime += ps[i].time;
             }
+            ps[0].totalTimeSpent = totalTime;
             break;
         }
 
@@ -705,7 +733,32 @@ void svCallIsr()
             break;
 
         case PMAP_SVC:
+        {
+            programMap *pm;
+            pm = (programMap*) *(psp + 1);
+            pid = pm->pid;
+            bool found = 0;
+
+            for(i = 0; i < MAX_TASKS; i++)
+            {
+                if (pid == (uint32_t)tcb[i].pid)
+                {
+                    found = 1;
+                    pm->address = (uint32_t) tcb[i].sp;
+                    strncpy(pm->processName, tcb[i].name, 16);
+                    pm->size = tcb[i].size;
+                    if (strCmp(pm->processName, "lengthyFn") == 0)
+                        pm->stackOrHeap = 0;
+                    else
+                        pm->stackOrHeap = 1;
+                }
+
+            }
+            if (!found)
+                putsUart0("\nNOT FOUND\n");
+
             break;
+        }
 
         case PIDOF_SVC:
             arr = *(psp);
@@ -885,6 +938,15 @@ void initHw()
     enablePinPullup(PB_4);
     enablePinPullup(PB_5);
 
+    // Enable clocks
+    SYSCTL_RCGCTIMER_R |= SYSCTL_RCGCTIMER_R1;
+
+    // Configure Timer 1 as the time base
+    TIMER1_CTL_R &= ~TIMER_CTL_TAEN;                                     // turn-off timer before reconfiguring
+    TIMER1_CFG_R = TIMER_CFG_32_BIT_TIMER;                               // configure as 32-bit timer (A+B)
+    TIMER1_TAMR_R = TIMER_TAMR_TAMR_PERIOD | TIMER_TAMR_TACDIR;          // configure for periodic mode (count up)
+    TIMER1_TAILR_R = TIMER_TAILR_M;                                      // set load value
+
 // 1/1000 = x, x/(1/40,000,000) = 40000 - 1 = 39999
 
 }
@@ -943,7 +1005,7 @@ void getData(uint8_t type, void * generic)
            break;
 
        case PMAP_SVC:
-
+           svcPMAP();
            break;
 
        case PIDOF_SVC:
@@ -1023,17 +1085,17 @@ void idle()
     }
 }
 
-void idle2()
-{
-
-    while(true)
-    {
-        setPinValue(RED_LED, 1);
-        waitMicrosecond(1000);
-        setPinValue(RED_LED, 0);
-        yield();
-    }
-}
+//void idle2()
+//{
+//
+//    while(true)
+//    {
+//        setPinValue(RED_LED, 1);
+//        waitMicrosecond(1000);
+//        setPinValue(RED_LED, 0);
+//        yield();
+//    }
+//}
 
 void flash4Hz()
 {
@@ -1188,7 +1250,10 @@ void shell()
     bool preemptToggle;
     bool schedToggle;
     char name[12];
+    uint64_t percentage = 0;
+
     programStatus ps[10] = {0};
+    programMap pm;
 
     putsUart0("\n");
     putsUart0("> ");
@@ -1205,47 +1270,69 @@ void shell()
 
         else if (isCommand(&data, "ps", 0))
         {
-            getData(21, (void *)&ps);
+            getData(PS_SVC, (void *)&ps);
+            putsUart0("CPU %: \t");
+            putsUart0("  Name: \t\t");
+            putsUart0("  PID:     ");
+            putsUart0("  Priority: \t");
+            putsUart0(" State: \n");
+            putsUart0("-------------------------------------------------------\n");
             for(i = 0; i < 10; i++)
             {
-                putsUart0("CPU %: ");
-                itoa_s(ps[i].time);
-                putsUart0("\t | Name: ");
+                percentage = (ps[i].time * 10000) / ps[0].totalTimeSpent;
+                itoa_s_percentage(percentage);
+                //itoa_s(ps[i].time);
+                putsUart0("    \t");
+
+                if (strCmp(ps[i].processName, "idle") == 0 )
+                    putsUart0("\t");
+
                 putsUart0(ps[i].processName);
-                //putsUart0("");
-                putsUart0("\t | PID: ");
+
+                putsUart0("     \t");
+
+                if (strCmp(ps[i].processName, "shell") == 0 || strCmp(ps[i].processName, "errant") == 0)
+                    putsUart0("\t");
+
+                if (strCmp(ps[i].processName, "idle") == 0 )
+                    putsUart0("\t");
                 itoa_s((uint32_t)ps[i].pid);
-                putsUart0("\t | Priority: ");
+                putsUart0("       \t");
+
+
                 if (ps[i].priority == 0)
                 {
                     putsUart0("0");
                 }
                 itoa_s(ps[i].priority);
-                putsUart0("\t | State: ");
+                putsUart0("      \t\t");
+
+
 
                 switch (ps[i].state)
+
                 {
                     case STATE_INVALID:
-                        putsUart0("STATE_INVALID");
+                        putsUart0("STATE_INVALID\n");
                         break;
 
                     case STATE_UNRUN:
-                        putsUart0("STATE_UNRUN");
+                        putsUart0("STATE_UNRUN\n");
                         break;
 
                     case STATE_READY:
-                        putsUart0("STATE_READY");
+                        putsUart0("STATE_READY\n");
                         break;
 
                     case STATE_DELAYED:
-                        putsUart0("STATE_DELAYED");
+                        putsUart0("STATE_DELAYED\n");
                         break;
 
                     case STATE_BLOCKED:
-                        putsUart0("STATE_BLOCKED");
+                        putsUart0("STATE_BLOCKED\n");
                         break;
                 }
-                putsUart0("\n");
+                //putsUart0("\n");
 
             }
         }
@@ -1264,7 +1351,28 @@ void shell()
         else if (isCommand(&data, "pmap", 0))
         {
             pidNumber = getFieldInteger(&data, 1);
-            //pmap(pidNumber, getFieldString(&data, 1));
+            pm.pid = pidNumber;
+            getData(PMAP_SVC, (void *)&pm);
+
+            putsUart0("Name: \t");
+            putsUart0("  Address: \t\t");
+            putsUart0("  Size:     \t");
+            putsUart0("  Stack vs Heap: \n");
+            putsUart0("-------------------------------------------------------\n");
+            putsUart0(pm.processName);
+            putsUart0("     \t");
+            itoa_h_pmap(pm.address);
+            putsUart0("     \t");
+            itoa_s(pm.size);
+            putsUart0("           \t");
+            if(pm.stackOrHeap)
+            {
+                putsUart0("Stack\n");
+            }
+            else
+                putsUart0("Heap\n");
+
+
         }
 
         else if (isCommand(&data, "preempt", 0))
