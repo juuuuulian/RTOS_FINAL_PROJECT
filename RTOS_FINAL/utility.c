@@ -68,7 +68,7 @@ void itoa_s(uint32_t num)
     }
     buff[len] = '\0';
     putsUart0(buff);
-    putsUart0("\n");
+    //putsUart0("\n");
 
 }
 /*

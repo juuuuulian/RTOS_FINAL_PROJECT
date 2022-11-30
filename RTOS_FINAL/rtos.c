@@ -318,6 +318,52 @@ void initRtos()
         tcb[i].pid = 0;
     }
 }
+/*
+int rtosScheduler()
+{
+    bool ok;
+    static uint8_t task = 0xFF;
+    ok = false;
+    static uint8_t last_run_task[8] = {0};
+    uint8_t highest_priority = 7;
+
+    if(priorityFlag)
+    {
+        last_run_task[tcb[taskCurrent].priority] = taskCurrent;
+        highest_priority = 7;
+        for(task = 0; task < MAX_TASKS; task++)
+        {
+            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority < highest_priority))
+                highest_priority = tcb[task].priority;
+        }
+
+        task = last_run_task[highest_priority];
+
+        while(!ok)
+        {
+            task++;
+            if (task >= MAX_TASKS)
+                task = 0;
+            if((tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN) && (tcb[task].priority == highest_priority))
+                ok = 1;
+        }
+    }
+
+    else
+    {
+        while(!ok)
+        {
+            task++;
+            if (task >= MAX_TASKS)
+                task = 0;
+            ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
+        }
+    }
+    return task;
+}
+*/
+
+
 
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
@@ -328,6 +374,7 @@ int rtosScheduler()
     static uint8_t priority[8];
     static uint8_t currentTask = 0;
     uint8_t index;
+    uint8_t high = 7;
     uint8_t i;
     bool ok;
 // TODO: something is weird here
@@ -634,13 +681,14 @@ void svCallIsr()
             if (semaphores[*psp].queueSize > 0)                                 // if there are processes in the semaphore Queue
             {                                                                   // mark the next waiting task as ready
                 tcb[semaphores[*psp].processQueue[0]].state = STATE_READY;
-                semaphores[*psp].queueSize--;
 
+                semaphores[*psp].count--;
                 for (i = 0; i < semaphores[*psp].queueSize; i++)
                 {
                     semaphores[*psp].processQueue[i] = semaphores[*psp].processQueue[i + 1];      // move them up
                 }
-                semaphores[*psp].count--;
+                semaphores[*psp].queueSize--;
+
             }
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
@@ -671,13 +719,15 @@ void svCallIsr()
 
         case PS_SVC:
         {
-           // PROGRAM_STATUS *ps = (PROGRAM_STATUS*) *(psp + 1);
-            //programStatus *ps = (programStatus*) *(psp + 1);
             programStatus *ps;
             ps = (programStatus*) *(psp + 1);
             for(i = 0; i < 10; i++)
             {
+                ps[i].priority = tcb[i].priority;
                 ps[i].pid = (uint32_t)tcb[i].pid;
+                strncpy(ps[i].processName, tcb[i].name, 16);
+                ps[i].state = tcb[i].state;
+                ps[i].time = tcb[i].time;
             }
             break;
         }
@@ -1188,8 +1238,8 @@ void shell()
     char name[12];
     programStatus ps[10] = {0};
 
-//    putsUart0("\n");
-//    putsUart0("> ");
+    putsUart0("\n");
+    putsUart0("> ");
     while (true)
     {
         getsUart0(&data);
@@ -1203,19 +1253,48 @@ void shell()
 
         else if (isCommand(&data, "ps", 0))
         {
-            //ps.pid = (uint32_t)tcb[0].pid;
-//            for (i = 0; i < 2; i++)
-//            {
-//                ps[i].pid = (uint32_t)tcb[i].pid;
-//                strncpy(ps[i].processName, tcb[i].name, 16);
-//                ps[i].state = tcb[i].state;
-//                //ps[i].time = tcb[i].time;
-//                //ps[i].priority = tcb[i].priority;
-//            }
             getData(21, (void *)&ps);
             for(i = 0; i < 10; i++)
             {
+                putsUart0("CPU %: ");
+                itoa_s(ps[i].time);
+                putsUart0("\t | Name: ");
+                putsUart0(ps[i].processName);
+                //putsUart0("");
+                putsUart0("\t | PID: ");
                 itoa_s((uint32_t)ps[i].pid);
+                putsUart0("\t | Priority: ");
+                if (ps[i].priority == 0)
+                {
+                    putsUart0("0");
+                }
+                itoa_s(ps[i].priority);
+                putsUart0("\t | State: ");
+
+                switch (ps[i].state)
+                {
+                    case STATE_INVALID:
+                        putsUart0("STATE_INVALID");
+                        break;
+
+                    case STATE_UNRUN:
+                        putsUart0("STATE_UNRUN");
+                        break;
+
+                    case STATE_READY:
+                        putsUart0("STATE_READY");
+                        break;
+
+                    case STATE_DELAYED:
+                        putsUart0("STATE_DELAYED");
+                        break;
+
+                    case STATE_BLOCKED:
+                        putsUart0("STATE_BLOCKED");
+                        break;
+                }
+                putsUart0("\n");
+
             }
         }
 
@@ -1265,9 +1344,9 @@ void shell()
         else if (isCommand(&data, "pidof", 0))
         {
             strncpy(name,getFieldString(&data, 1),12);
-            //name = getFieldString(&data, 1);
             strncpy(data.buf, name, 16);
             svcPidOf();
+            putsUart0("\n");
         }
 
         else if (isCommand(&data, "run", 0))
