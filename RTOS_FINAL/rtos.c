@@ -447,7 +447,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
 // REQUIRED: modify this function to restart a thread
 void restartThread(_fn fn)
 {
-
+    svcRestartThread();
 }
 
 // REQUIRED: modify this function to stop a thread
@@ -531,7 +531,6 @@ void systickIsr()
     {
         for (i = 0; i < MAX_TASKS; i++)
         {
-
             tcb[i].time = 0;
         }
         initTime = 0;
@@ -561,17 +560,17 @@ void pendSvIsr()
 {
     uint8_t regionNum, i;
 
-    if (NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_DERR)
-    {
-        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_DERR;
-        putsUart0("Data access violation called by the MPU\n");
-    }
-
-    if (NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_IERR)
-    {
-        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_IERR;
-        putsUart0("Instruction access violation called by the MPU\n");
-    }
+//    if (NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_DERR)
+//    {
+//        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_DERR;
+//        putsUart0("Data access violation called by the MPU\n");
+//    }
+//
+//    if (NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_IERR)
+//    {
+//        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_IERR;
+//        putsUart0("Instruction access violation called by the MPU\n");
+//    }
 
     // Now we must save the other registers (R4-R11) so that we can eventually
     // return back to our task in the same state that we left.
@@ -884,12 +883,14 @@ void svCallIsr()
 
         case RESTART_THREAD_SVC:
         {
-            pid = *psp;
+            arr = *(psp);
             for(i = 0; i < MAX_TASKS; i++)
             {
-                if(tcb[i].pid == pid)
+                if (strCmp(arr, tcb[i].name) == 0)
                 {
-                    tcb[i].state = STATE_READY;
+                    tcb[i].sp = tcb[i].spInit;
+                    tcb[i].state = STATE_UNRUN;
+                    tcb[i].priority = tcb[i].initPriority;
                 }
             }
             break;
@@ -940,6 +941,15 @@ void mpuFaultIsr()
     printOffendingInstruction();
 
     dumpRegisters();
+
+    if (tcb[taskCurrent].state == STATE_DELAYED)
+    {
+
+        tcb[taskCurrent].ticks = 0;
+
+    }
+    tcb[taskCurrent].state = STATE_INVALID;
+
     NVIC_SYS_HND_CTRL_R &= ~(NVIC_SYS_HND_CTRL_MEMP);
     NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
 }
@@ -1578,7 +1588,9 @@ void shell()
         else if (isCommand(&data, "run", 0))
         {
             //name = getFieldString(&data, 1);
-            strncpy(name,getFieldString(&data, 1),12);
+            strncpy(name,getFieldString(&data, 1),16);
+            strncpy(data.buf, name, 16);
+            svcRestartThread();
         }
         putsUart0("> ");
         getcUart0();    // Clears the buffer
