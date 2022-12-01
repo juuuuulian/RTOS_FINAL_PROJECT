@@ -220,8 +220,8 @@ void *alloc(uint32_t size_in_bytes)
     {
         brk = '\0';
     }
-    putsUart0("Address from malloc: ");
-    itoa_h((uint32_t) brk);
+    //putsUart0("Address from malloc: ");
+    //itoa_h((uint32_t) brk);
     return p;
 }
 
@@ -371,9 +371,7 @@ int rtosScheduler()
             {
                 break;
             }
-
         }
-
         task = previousTasksArray[highestPriorityReached];              // set the task lined up to schedule to the next highest priority task at that level
 
         while(!ok)
@@ -387,7 +385,6 @@ int rtosScheduler()
                 ok = true;      // if we found the task with the priority with the highest priority then we break out of the loop
                 //break;
             }
-
         }
     }
 
@@ -579,7 +576,7 @@ void pendSvIsr()
 
     tcb[taskCurrent].time += (TIMER1_TAV_R - initTime);
 
-    cpuTime[taskCurrent] = tcb[taskCurrent].time;   //
+    cpuTime[taskCurrent] = tcb[taskCurrent].time;
     TIMER1_CTL_R &= ~TIMER_CTL_TAEN;
 
     TIMER1_TAV_R = 0;
@@ -705,8 +702,8 @@ void svCallIsr()
             {
                 heap = '\0';
             }
-            putsUart0("Address from heap malloc: ");
-            itoa_h((uint32_t) heap);
+            //putsUart0("Address from heap malloc: ");
+            //itoa_h((uint32_t) heap);
             //return p;
             break;
 
@@ -863,6 +860,7 @@ void svCallIsr()
 
         case KILL_SVC:
             pid = *psp;
+            uint8_t taskNum;
             for(i = 0; i < MAX_TASKS; i++)
             {
                 if(tcb[i].pid == pid)
@@ -870,7 +868,9 @@ void svCallIsr()
                     if(tcb[i].state == STATE_DELAYED)
                     {
                         tcb[i].ticks = 0;
+                        taskNum = i;
                     }
+
                     tcb[i].state = STATE_INVALID;
                 }
             }
@@ -883,15 +883,27 @@ void svCallIsr()
 
         case RESTART_THREAD_SVC:
         {
+
+            pid = *psp;
             arr = *(psp);
+            uint32_t pid2;
+            pid2 = r_atoi(arr);
+
             for(i = 0; i < MAX_TASKS; i++)
             {
-                if (strCmp(arr, tcb[i].name) == 0)
+                if ((strCmp(arr, tcb[i].name) == 0) || ( pid == (uint32_t)tcb[i].pid) || (pid2 == tcb[i].pid))
                 {
                     tcb[i].sp = tcb[i].spInit;
                     tcb[i].state = STATE_UNRUN;
                     tcb[i].priority = tcb[i].initPriority;
-                    break;
+                    if (strCmp(tcb[i].name, "LengthyFn") == 0)
+                    {
+                        brk -= (uint32_t) 0x400;
+                    }
+                }
+                if (strCmp(arr, "LengthyFn") == 0)
+                {
+                    brk -= (uint32_t) 0x400;
                 }
             }
             break;
@@ -1131,6 +1143,10 @@ void getData(uint8_t type, void * generic)
 
        case KILL_SVC:
            svcKill();
+           break;
+
+       case RESTART_THREAD_SVC:
+           svcRestartThread();
            break;
     }
 }
@@ -1532,12 +1548,7 @@ void shell()
             putsUart0("     \t");
             itoa_s(pm.size);
             putsUart0("           \t");
-            if(pm.stackOrHeap)
-            {
-                putsUart0("Stack\n");
-            }
-            else
-                putsUart0("Heap\n");
+            putsUart0("Stack\n");
 
             if(pm.heapSize > 0)
             {
@@ -1546,9 +1557,10 @@ void shell()
                 putsUart0(pm.processName);
                 putsUart0("     \t");
                 itoa_h_pmap(pm.heapAddress);
-                putsUart0("     \t");
+                putsUart0("            \t");
                 itoa_s(pm.heapSize);
                 putsUart0("           \t");
+                putsUart0("Heap\n");
             }
         }
 
@@ -1591,8 +1603,10 @@ void shell()
             //name = getFieldString(&data, 1);
             strncpy(name,getFieldString(&data, 1),16);
             strncpy(data.buf, name, 16);
+            //getData(RESTART_THREAD_SVC, &data);
             svcRestartThread();
         }
+
         putsUart0("> ");
         getcUart0();    // Clears the buffer
 
