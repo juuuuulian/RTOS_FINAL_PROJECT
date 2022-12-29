@@ -1,6 +1,8 @@
 # Real-Time Operating System
 This is an RTOS solution for an M4F controller that implements a preemptive RTOS solution with support for semaphores, yielding, sleep, priority scheduling, memory protection, and a shell interface.
 
+[<img src="picture/rtos_board.jpg" width="250"/>](picture/rtos_board.jpg)
+
 ## Scheduler (Layered Cake)
 Each time the scheduler is called, it will look at all ready threads and will choose the next task to execute. There is prioritization to 8 levels (0 highest to 7 lowest). The scheduler goes through each priority level starting at the highest priority level and checks each task to see which task is ready to run. Once a task has been found the task number is incremented and stored statically so that when we return to the scheduler we can give other tasks at the same priority level a chance to run. Another way of thinking about it is that each priority level maintains a circular array which loops through N number of tasks. Hence, the name layered cake.
 
