@@ -51,3 +51,33 @@ A task that hosts a command line interface to the PC. The command-line interface
 * turns preemption on or off. The default is preemption on.
 #### sched PRIO|RR 
 * selectes priority or round-robin scheduling. The default is priority scheduling.
+
+## Memory Manager
+A simple memory manager than allocates memory from the global heap.
+For this design, the ASP bit in the CONTROL register is set so that the thread code uses the Process Stack Pointer (the handler mode will always use the MSP).
+
+* The memory allocated will be rounded up to the nearest multiple of 1 KiB. The memory address of all allocated memory chunks will be aligned to a multiple of 1024.
+#### Overall Access (background rule)
+An all memory background rule that allows RW access to all memory for both privileged and unprivileged code. 
+#### Flash Access
+Creates a full-access MPU aperture for flash with RWX access for both privileged and unprivileged access.
+#### Peripheral Access
+Creates a full-access MPU aperture to peripherals and peripheral bitbanded addresses with RW access for privileged and unprivileged access.
+#### SRAM Access (All)
+Creates multiple MPUs regions to cover the 32KiB SRAM (each MPU region covers 8KiB, with 8 subregions of 1KiB each. With RW access for privileged mode and no access for unprivileged mode.
+```c
+setSramAccessWindow(uint32_t baseAdd, uint32_t size_in_bytes)
+```
+* allows access the the requested SRAM address range and disables access to all other addresses in SRAM. The allocated access will round up to the nearest multiple of 1 KiB.
+
+#### SRAM Access (Restricted)
+While in privileged mode, you can still access ram in the allocated range of SRAM.
+While in unprivileged mode you can access flash (run code) and r/w memory from the peripherals.
+While in unprivileged mode, accessing SRAM outside of the allocated range is not allowed (you will see an MPU ISR with information about the errant read/write from memory).
+
+## Fault Handling
+* If a Bus Fault ISR occurs, it displays “Bus fault in process N”
+* If a Usage Fault ISR occurs, it displays “Usage fault in process N”
+* If a Hard Fault ISR occurs, it displays “Hard fault in process N”. Also, provide the value of the PSP, MSP, and hard fault flags (in hex).
+* If an MPU Fault ISR occurs, it displays “MPU fault in process N”. Also, provide the value of the PSP, MSP, and memory fault flags (in hex). It also prints the offending instruction and data addresses. Displays the process stack dump (xPSR, PC, LR, R0-3, R12. Clears the MPU fault pending bit and triggers a pendsv ISR call.
+
