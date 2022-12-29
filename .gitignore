@@ -53,3 +53,5 @@ dkms.conf
 /.metadata/
 .jxbrowser.userdata/*
 *.zip
+.DS_Store
+*/.idea/*
